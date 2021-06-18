@@ -22,7 +22,7 @@ function varargout = SortaSort(varargin)
 
 % Edit the above text to modify the response to help SortaSort
 
-% Last Modified by GUIDE v2.5 08-Jul-2020 18:11:29
+% Last Modified by GUIDE v2.5 16-Jun-2021 22:19:17
 
     % Begin initialization code - DO NOT EDIT
     gui_Singleton = 1;
@@ -914,7 +914,6 @@ function tblSort_CellEditCallback(hObject, eventdata, handles)
 % handles    structure with handles and user data (see GUIDATA)
     clusterTypes = hObject.Data(:,1);
     clusterIDs = hObject.RowName;
-    clusterInds = zeros(size(clusterTypes));
     for j = 1:length(clusterIDs)
         currInd = find(strcmp(clusterIDs{j},handles.rez.SortaSort.ClusterID));
         handles.rez.SortaSort.ClusterType(currInd) = categorical(clusterTypes(j),...
@@ -1291,4 +1290,36 @@ function menuSettings_Callback(hObject, eventdata, handles)
     handles.rez.SortaSort.Settings = settingsStruct;
     guidata(hObject, handles);
 
+end
+
+function tblSort_KeyPressFcn(hObject, eventdata, handles)
+    keyChar = eventdata.Character;
+    switch keyChar
+        case 'n'
+            handles.rez.SortaSort.ClusterType(handles.SelClusters) = {'Noise'};
+            guidata(hObject, handles);
+            UpdateTable(hObject, handles);
+        case 'm'
+            handles.rez.SortaSort.ClusterType(handles.SelClusters) = {'MU'};
+            guidata(hObject, handles);
+            UpdateTable(hObject, handles);
+        case 's'
+            handles.rez.SortaSort.ClusterType(handles.SelClusters) = {'SU'};
+            guidata(hObject, handles);
+            UpdateTable(hObject, handles);
+         case 'u'
+            handles.rez.SortaSort.ClusterType(handles.SelClusters) = {'Unknown'};
+            guidata(hObject, handles);
+            UpdateTable(hObject, handles);
+    end
+end
+
+function tblInds = GetSelTblInds(handles) 
+    selClusterIds = handles.rez.SortaSort.ClusterID(handles.SelClusters);
+     (eventdata.Indices(:,1));
+    for j = 1:length(selClusters)
+        tblInds(j) = find(strcmp(selClustersIds(j),handles.tblSortH.RowName));
+    end
+    handles.SelClusters = clusterInds;
+    guidata(hObject, handles); 
 end
