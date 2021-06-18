@@ -1313,13 +1313,3 @@ function tblSort_KeyPressFcn(hObject, eventdata, handles)
             UpdateTable(hObject, handles);
     end
 end
-
-function tblInds = GetSelTblInds(handles) 
-    selClusterIds = handles.rez.SortaSort.ClusterID(handles.SelClusters);
-     (eventdata.Indices(:,1));
-    for j = 1:length(selClusters)
-        tblInds(j) = find(strcmp(selClustersIds(j),handles.tblSortH.RowName));
-    end
-    handles.SelClusters = clusterInds;
-    guidata(hObject, handles); 
-end
