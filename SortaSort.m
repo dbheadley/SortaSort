@@ -22,7 +22,7 @@ function varargout = SortaSort(varargin)
 
 % Edit the above text to modify the response to help SortaSort
 
-% Last Modified by GUIDE v2.5 16-Jun-2021 22:19:17
+% Last Modified by GUIDE v2.5 08-Jul-2020 18:11:29
 
     % Begin initialization code - DO NOT EDIT
     gui_Singleton = 1;
@@ -914,6 +914,7 @@ function tblSort_CellEditCallback(hObject, eventdata, handles)
 % handles    structure with handles and user data (see GUIDATA)
     clusterTypes = hObject.Data(:,1);
     clusterIDs = hObject.RowName;
+    clusterInds = zeros(size(clusterTypes));
     for j = 1:length(clusterIDs)
         currInd = find(strcmp(clusterIDs{j},handles.rez.SortaSort.ClusterID));
         handles.rez.SortaSort.ClusterType(currInd) = categorical(clusterTypes(j),...
