@@ -994,9 +994,10 @@ function PlotXCorr(selClusters, rez, figH, mmfFil)
             spkHist = missRatio*(spkHist/length(trigSpikes))/0.001;
             if k == j
                 spkHist(xCorrWindow+1) = 0;
-                fRate = length(rez.SortaSort.GroupedSpikes{trigCluster})/...
-                    ((max(rez.SortaSort.GroupedSpikes{trigCluster})-...
-                    min(rez.SortaSort.GroupedSpikes{trigCluster}))/sampRate);
+                fRate = sampRate/mean(diff(rez.SortaSort.GroupedSpikes{trigCluster}));
+%                     length(rez.SortaSort.GroupedSpikes{trigCluster})/...
+%                     ((max(rez.SortaSort.GroupedSpikes{trigCluster})-...
+%                     min(rez.SortaSort.GroupedSpikes{trigCluster}))/sampRate);
                 if isempty(fRate)
                     fRate = 0;
                 end
