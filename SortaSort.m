@@ -172,10 +172,10 @@ function pbMerge_Callback(hObject, eventdata, handles)
     uniqSpks = [true; diff(allSpikes)>30]; % remove spikes that are adjacent by 1 ms
     allSpikes = allSpikes(uniqSpks);
     counts = length(allSpikes);
-    newGroupWave = sum(bsxfun(@times,rez.SortaSort.dWU(:,:,selClusters),...
-        permute(counts,[1 3 2]))/sum(counts),3);
-    rez.SortaSort.dWU(:,:,selClusters) = [];
-    rez.SortaSort.dWU = cat(3,rez.SortaSort.dWU, newGroupWave);
+%     newGroupWave = sum(bsxfun(@times,rez.SortaSort.dWU(:,:,selClusters),...
+%         permute(counts,[1 3 2]))/sum(counts),3);
+%     rez.SortaSort.dWU(:,:,selClusters) = [];
+%     rez.SortaSort.dWU = cat(3,rez.SortaSort.dWU, newGroupWave);
     rez.SortaSort.ClusterID(selClusters) = [];
     rez.SortaSort.ClusterID{end+1} = num2str(max(cellfun(@str2num,rez.SortaSort.ClusterID))+1);
     rez.SortaSort.ClusterType(selClusters) = [];
@@ -193,6 +193,10 @@ function pbMerge_Callback(hObject, eventdata, handles)
     rez.SortaSort.GroupedAmplitudes(selClusters) = [];
     rez.SortaSort.GroupedAmplitudes{end+1} = allAmps;
     
+    rez.SortaSort.SpkWaves(selClusters) = [];
+    handles.rez = rez;
+    rez.SortaSort.SpkWaves{end+1} = ExtractSpkWaveforms(length(rez.SortaSort.GroupedSpikes), 100, handles);
+
 %     allPCs = cell2mat(rez.SortaSort.GroupedPCs(selClusters)');
 %     allPCs = allPCs(sInds,:);
 %     allPCs = allPCs(uniqSpks,:);
@@ -242,6 +246,12 @@ function menuOpen_Callback(hObject, eventdata, handles)
     handles.CurrFPath = fPath;
     fullPath = fullfile(fPath,fName);
     load(fullPath);
+    % create index into fil and dat data
+    filProp = dir(rez.ops.fbinary);
+    numTPts = filProp.bytes/(2*rez.ops.NchanTOT);
+    handles.mmfFil = memmapfile(rez.ops.fbinary,'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
+    handles.mmfDat = memmapfile([rez.ops.fbinary(1:(end-3)) 'dat'],'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
+        
     if exist('rez')
         if ~isfield(rez,'SortaSort')
             rez.SortaSort.Settings = struct('uVScale', 2.343, ... % convert binary values to microvolts
@@ -251,12 +261,12 @@ function menuOpen_Callback(hObject, eventdata, handles)
                                             'uVScaleBar', 25, ... % for scaling the waveforms plot
                                             'msScaleBar', 1); % for scaling the waveforms plot
             numClusters = size(rez.W,2);
-            for j = 1:numClusters
-                rez.SortaSort.dWU(:,:,j) = squeeze(rez.W(:,j,:))*squeeze(rez.U(:,j,:))';
-            end
-            if isa(rez.SortaSort.dWU,'gpuArray')
-                rez.SortaSort.dWU = gather(rez.SortaSort.dWU);
-            end
+%             for j = 1:numClusters
+%                 rez.SortaSort.dWU(:,:,j) = squeeze(rez.W(:,j,:))*squeeze(rez.U(:,j,:))';
+%             end
+%             if isa(rez.SortaSort.dWU,'gpuArray')
+%                 rez.SortaSort.dWU = gather(rez.SortaSort.dWU);
+%             end
             % remove duplicate spikes
             [~,uniqSpks,~] = unique(rez.st3(:,[1 2]),'rows');
             rez.st3 = rez.st3(uniqSpks,:);
@@ -269,19 +279,19 @@ function menuOpen_Callback(hObject, eventdata, handles)
                 1:numClusters,'uniformoutput',false);
             rez.SortaSort.GroupedAmplitudes = arrayfun(@(x)rez.st3(rez.st3(:,2)==x,3),...
                 1:numClusters,'uniformoutput',false);
+            handles.rez = rez;
+            for j = 1:numClusters
+                rez.SortaSort.SpkWaves{j} = ExtractSpkWaveforms(j, 100, handles);
+            end
             %rez.SortaSort.GroupedPCs = arrayfun(@(x)rez.cProjPC(rez.st3(:,2)==x,1:3,1),...
             %    1:numClusters,'uniformoutput',false);
+            
             rez.SortaSort.DistData = CalculateDistances(rez);
         end
         handles.SelClusters = 1;
         handles.CurrPlotClusters = nan;
         handles.rez = rez;
         
-        % create index into fil and dat data
-        filProp = dir(rez.ops.fbinary);
-        numTPts = filProp.bytes/(2*rez.ops.NchanTOT);
-        handles.mmfFil = memmapfile(rez.ops.fbinary,'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
-        handles.mmfDat = memmapfile([rez.ops.fbinary(1:(end-3)) 'dat'],'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
         handles.figure1.Name = ['SortaSort' fPath]; 
         guidata(hObject, handles);
         UpdateTable(hObject, handles)
@@ -369,10 +379,14 @@ end
 
 % Calculates all the various distance and similarity metrics between units
 function distData = CalculateDistances(rez)
-    [numSamp, numElec, numClus] = size(rez.SortaSort.dWU);
 
+    numClus = length(rez.SortaSort.SpkWaves);
+    [numSamp, numElec, ~] = size(rez.SortaSort.SpkWaves{1});
+    meanWaves = cell2mat(permute(cellfun(@(x)mean(x,3), rez.SortaSort.SpkWaves,...
+                'uniformoutput',false),[3 1 2]));
+    distData.MeanSpkWaves = meanWaves;
     % calculate profile map for each unit
-    profMap = sqrt(squeeze(sum(rez.SortaSort.dWU.^2,1)));
+    profMap = sqrt(squeeze(sum(meanWaves.^2,1)));
     profMap(isinf(profMap)) = 0;
     profMap = bsxfun(@rdivide,profMap,sum(profMap,1));
     distData.ProfileMap = profMap;
@@ -382,11 +396,10 @@ function distData = CalculateDistances(rez)
     distData.ProfileMapDist = profMapDists;
     
     % FIX PEAK ELEC CHAN
-    % PLOT MEAN FIRING RATE LINE
-    % SET XCORR WINDOW, BIN SIZE
+    % SET XCORR BIN SIZE, update XCORR function
     % determine profile map peaks
     for j = 1:numClus
-        [~, peakInd(j)] = max(profMap(:,j));
+        [~, peakInd(j)] = max(abs(profMap(:,j)));
         peakX(j) = rez.xc(peakInd(j));
         peakY(j) = rez.yc(peakInd(j));
     end
@@ -399,17 +412,17 @@ function distData = CalculateDistances(rez)
     distData.PeakDists = peakDists;
     
     % get waveform similarity across all electrodes
-    waveAllDists = corr(reshape(rez.SortaSort.dWU,[numElec*numSamp numClus]));
+    waveAllDists = corr(reshape(meanWaves,[numElec*numSamp numClus]));
     distData.WaveAllDists = 1-waveAllDists;
     
     % get spectral similarity across all electrodes
-    waveAllSpecDists = corr(reshape(abs(fft(rez.SortaSort.dWU,[],2)),[numElec*numSamp numClus]));
+    waveAllSpecDists = corr(reshape(abs(fft(meanWaves,[],2)),[numElec*numSamp numClus]));
     distData.WaveAllSpecDists = 1-waveAllSpecDists;
     
     % get peak waveform similarity
     clear peakWaves;
     for j = 1:numClus
-        peakWaves(:,j) = rez.SortaSort.dWU(:,peakInd(j),j);
+        peakWaves(:,j) = meanWaves(:,peakInd(j),j);
     end
     distData.PeakWaves = peakWaves;
     
@@ -437,7 +450,6 @@ function UpdateTable(hObject, handles)
         selClusters = handles.SelClusters;
     end
     
-    numClusters = size(sasData.dWU,3);
     sortCols = cell(4,1);
     sortCols{1} = arrayfun(@(x)char(x),sasData.ClusterType,'uniformoutput',false);
     colNames = {'AssignClusterType'};
@@ -859,7 +871,7 @@ end
 
 
 function PlotWaveforms(selClusters, rez, figH)
-    numSamps = size(rez.SortaSort.dWU,2);
+    numSamps = size(rez.SortaSort.DistData.MeanSpkWaves,1);
     uVScale = rez.SortaSort.Settings.uVScale;
     sampRate = rez.ops.fs;
     uVScaleBar = rez.SortaSort.Settings.uVScaleBar;
@@ -873,7 +885,7 @@ function PlotWaveforms(selClusters, rez, figH)
     medDiffY = min(diffY(diffY~=0));
     xScale = medDiffX/(numSamps/sampRate);
     
-    traces = rez.SortaSort.dWU(:,:,selClusters)*uVScale;
+    traces = rez.SortaSort.DistData.MeanSpkWaves(:,:,selClusters)*uVScale;
     traceRanges = max(traces,2)-min(traces,2);
     traceRange = max(traceRanges(:));
     yScale = medDiffY/traceRange;
@@ -1151,7 +1163,7 @@ function pbSplit_Callback(hObject, eventdata, handles)
 
     inSpks = inpolygon(spkTimes,spkAmps,polyPos(:,1),polyPos(:,2));
 
-    rez.SortaSort.dWU = cat(3,rez.SortaSort.dWU, rez.SortaSort.dWU(:,:,selClusters));
+    
     rez.SortaSort.ClusterID{end+1} = num2str(max(cellfun(@str2num,rez.SortaSort.ClusterID))+1);
     rez.SortaSort.ClusterType([selClusters end+1]) = categorical({'Unknown' 'Unknown'},...
     {'Unknown' 'Noise' 'MU' 'SU'});
@@ -1164,7 +1176,11 @@ function pbSplit_Callback(hObject, eventdata, handles)
 
 %     rez.SortaSort.GroupedPCs{selClusters} = origPCs(inSpks,:);
 %     rez.SortaSort.GroupedPCs{end+1} = origPCs(~inSpks,:);
-    
+    % retrieve a new set of spike waveforms using the new clusters
+    handles.rez = rez;
+    for j = [selClusters length(rez.SortaSort.GroupedSpikes)]
+        rez.SortaSort.SpkWaves{j} = ExtractSpkWaveforms(j, 100, handles);
+    end
     rez.SortaSort.DistData = CalculateDistances(rez);
     handles.SelClusters = [selClusters numel(rez.SortaSort.ClusterID)];
 
@@ -1315,3 +1331,21 @@ function tblSort_KeyPressFcn(hObject, eventdata, handles)
             UpdateTable(hObject, handles);
     end
 end
+
+function spkWaves = ExtractSpkWaveforms(clusterInd, numSpks, handles)
+    [numChan, recLength] = size(handles.mmfFil.Data.file);
+    spkTimes = handles.rez.SortaSort.GroupedSpikes{clusterInd};
+    spkTimes(spkTimes<31) = [];
+    spkTimes(spkTimes>(recLength-31)) = [];
+    if isempty(spkTimes)
+        spkWaves = nan(61,numChan);
+    else
+        subSpkTimes = spkTimes(randperm(length(spkTimes),min([length(spkTimes) numSpks])));
+        spkInds = (subSpkTimes+(-30:30))';
+        spkWaves = handles.mmfFil.Data.file(:,spkInds(:));
+        spkWaves = reshape(spkWaves,numChan,61,length(subSpkTimes));
+        spkWaves = permute(spkWaves, [2 1 3]);
+        spkWaves = double(spkWaves)-mean(spkWaves,1);
+    end
+end
+    
