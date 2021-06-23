@@ -1333,7 +1333,9 @@ function tblSort_KeyPressFcn(hObject, eventdata, handles)
 end
 
 function spkWaves = ExtractSpkWaveforms(clusterInd, numSpks, handles)
-    [numChan, recLength] = size(handles.mmfFil.Data.file);
+    [~, recLength] = size(handles.mmfFil.Data.file);
+    chanMap = handles.rez.ops.chanMap;
+    numChan = length(chanMap);
     spkTimes = handles.rez.SortaSort.GroupedSpikes{clusterInd};
     spkTimes(spkTimes<31) = [];
     spkTimes(spkTimes>(recLength-31)) = [];
@@ -1342,7 +1344,7 @@ function spkWaves = ExtractSpkWaveforms(clusterInd, numSpks, handles)
     else
         subSpkTimes = spkTimes(randperm(length(spkTimes),min([length(spkTimes) numSpks])));
         spkInds = (subSpkTimes+(-30:30))';
-        spkWaves = handles.mmfFil.Data.file(:,spkInds(:));
+        spkWaves = handles.mmfFil.Data.file(chanMap,spkInds(:));
         spkWaves = reshape(spkWaves,numChan,61,length(subSpkTimes));
         spkWaves = permute(spkWaves, [2 1 3]);
         spkWaves = double(spkWaves)-mean(spkWaves,1);
