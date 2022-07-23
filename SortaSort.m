@@ -22,7 +22,7 @@ function varargout = SortaSort(varargin)
 
 % Edit the above text to modify the response to help SortaSort
 
-% Last Modified by GUIDE v2.5 18-Jun-2021 00:40:43
+% Last Modified by GUIDE v2.5 25-Jul-2021 12:26:25
 
     % Begin initialization code - DO NOT EDIT
     gui_Singleton = 1;
@@ -195,7 +195,8 @@ function pbMerge_Callback(hObject, eventdata, handles)
     
     rez.SortaSort.SpkWaves(selClusters) = [];
     handles.rez = rez;
-    rez.SortaSort.SpkWaves{end+1} = ExtractSpkWaveforms(length(rez.SortaSort.GroupedSpikes), 100, handles);
+    rez.SortaSort.SpkWaves{end+1} = median(ExtractSpkWaveforms(...
+        length(rez.SortaSort.GroupedSpikes), 100, handles),3);
 
 %     allPCs = cell2mat(rez.SortaSort.GroupedPCs(selClusters)');
 %     allPCs = allPCs(sInds,:);
@@ -246,12 +247,27 @@ function menuOpen_Callback(hObject, eventdata, handles)
     handles.CurrFPath = fPath;
     fullPath = fullfile(fPath,fName);
     load(fullPath);
-    % create index into fil and dat data
+    
+    % create index into binary data
     filProp = dir(rez.ops.fbinary);
-    numTPts = filProp.bytes/(2*rez.ops.NchanTOT);
-    handles.mmfFil = memmapfile(rez.ops.fbinary,'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
-    handles.mmfDat = memmapfile([rez.ops.fbinary(1:(end-3)) 'dat'],'format',{'int16' [rez.ops.NchanTOT numTPts] 'file'});
+    if isempty(filProp)
+        [binFName, binFPath] = uigetfile(handles.CurrFPath, ['Binary file not found, ' ...
+                                   'please locate it:']);
+        rez.ops.fbinary = fullfile(binFPath, binFName);
+        %filProp = dir(rez.ops.fbinary);
         
+    end
+%     handles.BinF.NumTPts = filProp.bytes/(2*rez.ops.NchanTOT);
+%     handles.BinF.ChanNum = rez.ops.NchanTOT;
+%     handles.BinF.FID = fopen(rez.ops.fbinary,'r');
+    
+    % TEST IF REZ FILE USES A STRING OR VECTOR FOR CHAN MAP. IF STRING
+    % LOAD CHANMAP FILE REFERENCED FILE
+    handles.mmfFil = memmapfile(rez.ops.fbinary,'format',{'int16' [rez.ops.NchanTOT rez.ops.sampsToRead] 'file'});
+%     times = ((0:100)*30000)+1;
+%     tic;
+%     test = ReadBinF(1:384, times, [-500 500], handles);
+%     toc
     if exist('rez')
         if ~isfield(rez,'SortaSort')
             rez.SortaSort.Settings = struct('uVScale', 2.343, ... % convert binary values to microvolts
@@ -261,17 +277,9 @@ function menuOpen_Callback(hObject, eventdata, handles)
                                             'uVScaleBar', 25, ... % for scaling the waveforms plot
                                             'msScaleBar', 1); % for scaling the waveforms plot
             numClusters = size(rez.W,2);
-%             for j = 1:numClusters
-%                 rez.SortaSort.dWU(:,:,j) = squeeze(rez.W(:,j,:))*squeeze(rez.U(:,j,:))';
-%             end
-%             if isa(rez.SortaSort.dWU,'gpuArray')
-%                 rez.SortaSort.dWU = gather(rez.SortaSort.dWU);
-%             end
-            % remove duplicate spikes
             [~,uniqSpks,~] = unique(rez.st3(:,[1 2]),'rows');
             rez.st3 = rez.st3(uniqSpks,:);
-            %rez.cProj = rez.cProj(uniqSpks,:);
-            %rez.cProjPC = rez.cProjPC(uniqSpks,:,:);
+
             rez.SortaSort.ClusterID = arrayfun(@num2str,1:numClusters,'uniformoutput',false);
             rez.SortaSort.ClusterType = categorical(repmat({'Unknown'},numClusters,1),...
                 {'Unknown' 'Noise' 'MU' 'SU'});
@@ -281,11 +289,23 @@ function menuOpen_Callback(hObject, eventdata, handles)
                 1:numClusters,'uniformoutput',false);
             handles.rez = rez;
             for j = 1:numClusters
-                rez.SortaSort.SpkWaves{j} = ExtractSpkWaveforms(j, 100, handles);
+                meanWave = median(ExtractSpkWaveforms(j, 100, handles),3);
+                [~, maxInd] = max(abs(meanWave(:)));
+                [maxT,~] = ind2sub(size(meanWave),maxInd);
+                shiftT = 31-maxT;
+                if shiftT ~= 0
+                    currSpikes = rez.SortaSort.GroupedSpikes{j};
+                    currSpikes = currSpikes - shiftT;
+                    shiftedOut = (currSpikes<0) | (currSpikes>rez.ops.sampsToRead);
+                    currSpikes(shiftedOut) = [];
+                    rez.SortaSort.GroupedSpikes{j} = currSpikes;
+                    handles.rez = rez;
+                    rez.SortaSort.SpkWaves{j} = median(ExtractSpkWaveforms(j, 100, handles),3);
+                else
+                    rez.SortaSort.SpkWaves{j} = meanWave;
+                end
             end
-            %rez.SortaSort.GroupedPCs = arrayfun(@(x)rez.cProjPC(rez.st3(:,2)==x,1:3,1),...
-            %    1:numClusters,'uniformoutput',false);
-            
+
             rez.SortaSort.DistData = CalculateDistances(rez);
         end
         handles.SelClusters = 1;
@@ -382,14 +402,16 @@ function distData = CalculateDistances(rez)
 
     numClus = length(rez.SortaSort.SpkWaves);
     [numSamp, numElec, ~] = size(rez.SortaSort.SpkWaves{1});
-    meanWaves = cell2mat(permute(cellfun(@(x)mean(x,3), rez.SortaSort.SpkWaves,...
-                'uniformoutput',false),[3 1 2]));
+    meanWaves = cell2mat(permute(rez.SortaSort.SpkWaves,[3 1 2]));
     distData.MeanSpkWaves = meanWaves;
     % calculate profile map for each unit
-    profMap = sqrt(squeeze(sum(meanWaves.^2,1)));
+    profMap = sqrt(squeeze(sum((meanWaves-mean(meanWaves,1)).^2,1)));
     profMap(isinf(profMap)) = 0;
-    profMap = bsxfun(@rdivide,profMap,sum(profMap,1));
+    profMap = bsxfun(@rdivide,profMap,max(profMap,[],1));
     distData.ProfileMap = profMap;
+    
+    % calculate approximation of spatial spread of waveform
+    distData.Spread = sum(distData.ProfileMap,1);
     
     % calculate distances between profile maps
     profMapDists = 1-corr(profMap);
@@ -403,7 +425,8 @@ function distData = CalculateDistances(rez)
         peakX(j) = rez.xc(peakInd(j));
         peakY(j) = rez.yc(peakInd(j));
     end
-    distData.Peaks = [peakX peakY];
+    distData.PeakX = peakX;
+    distData.PeakY = peakY;
     distData.PeakInds = peakInd;
     distData.PeakChans = rez.ops.chanMap(peakInd);
     
@@ -440,8 +463,6 @@ function UpdateTable(hObject, handles)
                handles.pmCol2.String{handles.pmCol2.Value}; ...
                handles.pmCol3.String{handles.pmCol3.Value}};
     
-    % to use when colorized plots are added, see https://www.mathworks.com/matlabcentral/answers/25038-how-to-change-each-cell-color-in-a-uitable     
-    colorgen = @(color,text)['<table border=0 width=400 bgcolor=',color,'><TR><TD>',text,'</TD></TR> </table>'];
     % determine if a particular cluster is selected, otherwise orient to
     % first cluster
     if isempty(handles.SelClusters)
@@ -461,55 +482,91 @@ function UpdateTable(hObject, handles)
         switch currCol
             case 'Cluster ID'
                 sortCols{j+1} = str2num(strjoin(sasData.ClusterID,' '))';
+                dispCols{j+1} = num2cell(sortCols{j+1});
                 colNames{j+1} = 'ClusterID';
                 colTypes{j+1} = 'char';
                 colorYes(j+1) = false;
                 colSortDir{j} = 'ascend';
             case 'Cluster Type'
                 sortCols{j+1} = arrayfun(@(x)char(x),sasData.ClusterType,'uniformoutput',false);
+                dispCols{j+1} = sortCols{j+1};
                 colNames{j+1} = 'ClusterType';
                 colTypes{j+1} = 'char';
                 colorYes(j+1) = false;
                 colSortDir{j} = 'descend';
             case 'Spatial Profile'
                 sortCols{j+1} = mean(sasData.DistData.ProfileMapDist(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfun(@(x)colorGen(255*(sqrt(2)-sqrt(x))/sqrt(2),x), sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'SpatialProfile';
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Peak Location'
                 sortCols{j+1} = mean(sasData.DistData.PeakDists(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfun(@(x)colorGen(255*(sqrt(max(x))-sqrt(x))/sqrt(max(x)),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'PeakLocation';    
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Complete Waveform'
                 sortCols{j+1} = mean(sasData.DistData.WaveAllDists(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfun(@(x)colorGen(255*(sqrt(2)-sqrt(x))/sqrt(2),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'CompleteWaveform';
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Complete Spectrum'
                 sortCols{j+1} = mean(sasData.DistData.WaveAllSpecDists(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfun(@(x)colorGen(255*(sqrt(2)-sqrt(x))/sqrt(2),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'CompleteSpectrum';   
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Peak Waveform'
                 sortCols{j+1} = mean(sasData.DistData.WavePeakDists(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfunfun(@(x)colorGen(255*(sqrt(2)-sqrt(x))/sqrt(2),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'PeakWaveform';
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Peak Spectrum'
                 sortCols{j+1} = mean(sasData.DistData.WavePeakSpecDists(selClusters,:),1)';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %arrayfun(@(x)colorGen(255*(sqrt(2)-sqrt(x))/sqrt(2),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
                 colNames{j+1} = 'PeakSpectrum';
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
             case 'Peak Channel'
                 sortCols{j+1} = sasData.DistData.PeakChans';
+                dispCols{j+1} = num2cell(sortCols{j+1});
                 colNames{j+1} = 'PeakChannel';
+                colTypes{j+1} = 'numeric';
+                colorYes(j+1) = true;
+                colSortDir{j} = 'ascend';
+            case 'Spread'
+                sortCols{j+1} = sasData.DistData.Spread';
+                dispCols{j+1} = num2cell(sortCols{j+1}); %cellfun(@(x)colorGen(255*(sqrt(max(x))-sqrt(x))/sqrt(max(x)),x), ...
+                                        %sortCols{j+1},'uniformoutput',false);
+                colNames{j+1} = 'Spread';
+                colTypes{j+1} = 'numeric';
+                colorYes(j+1) = true;
+                colSortDir{j} = 'ascend';
+            case 'Peak X'
+                sortCols{j+1} = sasData.DistData.PeakX';
+                dispCols{j+1} = num2cell(sortCols{j+1});
+                colNames{j+1} = 'PeakX';
+                colTypes{j+1} = 'numeric';
+                colorYes(j+1) = true;
+                colSortDir{j} = 'ascend';
+             case 'Peak Y'
+                sortCols{j+1} = sasData.DistData.PeakY';
+                dispCols{j+1} = num2cell(sortCols{j+1});
+                colNames{j+1} = 'PeakY';
                 colTypes{j+1} = 'numeric';
                 colorYes(j+1) = true;
                 colSortDir{j} = 'ascend';
@@ -519,17 +576,23 @@ function UpdateTable(hObject, handles)
     distTable = table(sortCols{1},sortCols{2},sortCols{3},sortCols{4});
     [distTable, sortInds] = sortrows(distTable,[2 3 4],colSortDir);
     handles.tblSort.ColumnFormat = colTypes;
-    handles.tblSort.Data = table2cell(distTable);
+    handles.tblSort.Data = [sortCols{1}(sortInds), dispCols{2}(sortInds), ...
+                            dispCols{3}(sortInds), dispCols{4}(sortInds)];
     handles.tblSort.ColumnEditable = [true false false false];
     handles.tblSort.ColumnName = colNames;
     handles.tblSort.RowName = rowNames(sortInds);
     handles.SortedInds = sortInds;
-    % colorize numeric entries
+
+    % Place scroll bar near last position
+%     
+%     [jScrollpane, levels, parentIdx, listing] = findjobj(hObject);
+%     scrollValue = jScrollpane.getVerticalScrollBar.getValue;    
+%     drawnow;
+%     jScrollpane.getVerticalScrollBar.setValue(scrollValue);
     
     %handles.tblSort.RearrangeableColumns = false;
     guidata(hObject, handles);
 end
-
 
 % --- Executes when selected cell(s) is changed in tblSort.
 function tblSort_CellSelectionCallback(hObject, eventdata, handles)
@@ -605,7 +668,7 @@ function UpdatePlots(hObject, handles)
         figure(handles.TraceH);
         waitbar(3/numPlots,waitH,'Plotting traces');
         PlotTraces(handles.SelClusters,handles.rez, handles.TraceH, ...
-            handles.mmfFil, handles.mmfDat)
+            handles.mmfFil)
     end
     if handles.cbXCorr.Value
         if ~isfield(handles,'XCorrH')
@@ -630,7 +693,7 @@ function UpdatePlots(hObject, handles)
         set(gcf,'name','Amplitudes');
         waitbar(5/numPlots,waitH,'Plotting amplitudes');
         PlotAmplitudes(handles.SelClusters,handles.rez, handles.AmpsH, ...
-            handles.mmfFil, handles.mmfDat)
+            handles.mmfFil)
     end
     if handles.cbFeatures.Value
         if ~isfield(handles,'FetsH')
@@ -643,7 +706,7 @@ function UpdatePlots(hObject, handles)
         set(gcf,'name','Features');
         waitbar(6/numPlots,waitH,'Plotting features');
         PlotFeatures(handles.SelClusters,handles.rez, handles.FetsH, ...
-            handles.mmfFil, handles.mmfDat)
+            handles.mmfFil)
     end
     figure(handles.figure1);
     close(waitH);
@@ -651,7 +714,7 @@ function UpdatePlots(hObject, handles)
     guidata(hObject, handles);
 end
 
-function PlotTraces(selClusters, rez, figH, mmfFil, mmfDat)
+function PlotTraces(selClusters, rez, figH, mmfFil)
     colorset = colormap('lines');
     chanMap = rez.ops.chanMap;
     peakInds = rez.SortaSort.DistData.PeakInds;
@@ -683,15 +746,10 @@ function PlotTraces(selClusters, rez, figH, mmfFil, mmfDat)
         
         filData = double(mmfFil.data.file(peakChans(j),filInds(:)))*uVScale;
         filData = reshape(filData,[(2*tWindowInds)+1 length(subSpks)]);
-        datData = double(mmfDat.data.file(peakChans(j),datInds(:)))*uVScale;
-        datData = reshape(datData,[(2*tWindowInds)+1 length(subSpks)]);
         filTData = (-tWindowInds:tWindowInds)/rez.ops.fs;
-        datTData = (-tWindowInds:tWindowInds)/rez.ops.fs;
         
         figure(figH);
         subplot(1,length(selClusters),j);
-        PlotStackedLines(datData', datTData, 0.5*[1 1 1], 'ABSSEP', uVSep);
-        hold on;
         PlotStackedLines(filData',filTData,colorset(mod(j,64)+1,:), 'ABSSEP', uVSep);
         set(gca,'ytick',[]);
         title(num2str(rez.SortaSort.ClusterID{currCluster}));
@@ -702,7 +760,7 @@ function PlotTraces(selClusters, rez, figH, mmfFil, mmfDat)
     h.Enable = 'on';
 end
 
-function PlotAmplitudes(selClusters, rez, figH, mmfFil, mmfDat)
+function PlotAmplitudes(selClusters, rez, figH, mmfFil)
     colorset = colormap('lines');
     % plot firing rates across time
     for j = 1:length(selClusters)
@@ -736,7 +794,7 @@ function PlotAmplitudes(selClusters, rez, figH, mmfFil, mmfDat)
         figure(figH);
         set(figH,'defaultAxesColorOrder',[0 0 0; 0 0 0]);
         yyaxis right;
-        userData = {rez selClusters mmfFil mmfDat};
+        userData = {rez selClusters mmfFil};
         scatter(spkTimes,spkAmps,'.','MarkerEdgeColor',colorset(mod(j,64)+1,:), ...
             'userdata',userData,'ButtonDownFcn',@Amplitudes_ButtonDownFunc);
         ylabel('Spike Amplitudes');
@@ -752,7 +810,6 @@ function PlotAmplitudes(selClusters, rez, figH, mmfFil, mmfDat)
         rez = source.UserData{1};
         selClusters = source.UserData{2};
         mmfFil = source.UserData{3};
-        mmfDat = source.UserData{4};
         timePt = datevec(eventdata.IntersectionPoint(1));
         timePt = (timePt(4)*3600)+(timePt(5)*60)+timePt(6);
         timePt = ceil(timePt*30000);
@@ -771,19 +828,15 @@ function PlotAmplitudes(selClusters, rez, figH, mmfFil, mmfDat)
         datInds(datInds<1) = 1;
         datInds(datInds>numTPts) = numTPts;
         filData = double(mmfFil.data.file(peakChans,filInds));
-        datData = double(mmfDat.data.file(peakChans,datInds));
         
         filColors = colorset(mod(find(1:length(selClusters)),64)+1,:);
         filTData = (-3000:3000)/rez.ops.fs;    
-        datTData = linspace(-0.1,0.1,30001);
         figure;
         axes;
         ylim([-1500 ((length(selClusters)-1)*1200)+1500]);
         hold on;
         line([0 0],ylim,'color',[0.5 0.5 0.5])
         PlotStackedLines(filData, filTData, filColors, 'ABSSEP', 1200);
-        hold on;
-        PlotStackedLines(datData/4, datTData, [0.5 0.5 0.5], 'ABSSEP', 1200);
         
         title('Traces around time point');
         h = zoom;
@@ -792,7 +845,7 @@ function PlotAmplitudes(selClusters, rez, figH, mmfFil, mmfDat)
     end
 end
 % 
-% function PlotFeatures(selClusters, rez, figH, mmfFil, mmfDat)
+% function PlotFeatures(selClusters, rez, figH, mmfFil)
 %     colorset = colormap('lines');
 %     
 %     % plot scatter of time points and amplitudes
@@ -806,7 +859,7 @@ end
 %         figure(figH);
 %         set(figH,'defaultAxesColorOrder',[0 0 0; 0 0 0]);
 %         
-%         userData = {rez selClusters mmfFil mmfDat};
+%         userData = {rez selClusters mmfFil};
 %         scatter3(spkFets(:,1),spkFets(:,2),spkFets(:,3),'.',...
 %             'MarkerEdgeColor',colorset(mod(j,64)+1,:), ...
 %             'userdata',userData,'ButtonDownFcn',@Features_ButtonDownFunc);
@@ -826,7 +879,6 @@ end
 %         rez = source.UserData{1};
 %         selClusters = source.UserData{2};
 %         mmfFil = source.UserData{3};
-%         mmfDat = source.UserData{4};
 %         pcPt = eventdata.IntersectionPoint;
 %         spkPCs = vertcat(rez.SortaSort.GroupedPCs{selClusters});
 %         spkInd = find((spkPCs(:,1)==pcPt(1))&(spkPCs(:,2)==pcPt(2))&...
@@ -844,24 +896,16 @@ end
 %         filInds(filInds<1) = 1;
 %         filInds(filInds>numTPts) = numTPts;
 %         
-%         datInds = timePt + [-15000:15000]';
-%         datInds(datInds<1) = 1;
-%         datInds(datInds>numTPts) = numTPts;
 %         filData = double(mmfFil.data.file(peakChans,filInds));
-%         datData = double(mmfDat.data.file(peakChans,datInds));
 %         
 %         filColors = colorset(mod(find(1:length(selClusters)),64)+1,:);
 %         filTData = (-3000:3000)/rez.ops.fs;    
-%         datTData = linspace(-0.1,0.1,30001);
 %         figure;
 %         axes;
 %         ylim([-1500 ((length(selClusters)-1)*1200)+1500]);
 %         hold on;
 %         line([0 0],ylim,'color',[0.5 0.5 0.5])
 %         PlotStackedLines(filData, filTData, filColors, 'ABSSEP', 1200);
-%         hold on;
-%         PlotStackedLines(datData/4, datTData, [0.5 0.5 0.5], 'ABSSEP', 1200);
-%         
 %         title('Traces around time point');
 %         h = zoom;
 %         h.Motion = 'horizontal';
@@ -881,8 +925,8 @@ function PlotWaveforms(selClusters, rez, figH)
     yCoords = rez.yc;
     diffX = abs(bsxfun(@minus, xCoords, xCoords'));
     diffY = abs(bsxfun(@minus, yCoords, yCoords'));
-    medDiffX = min(diffX(diffX~=0));
-    medDiffY = min(diffY(diffY~=0));
+    medDiffX = min([1 min(diffX(diffX~=0))]);
+    medDiffY = min([1 min(diffY(diffY~=0))]);
     xScale = medDiffX/(numSamps/sampRate);
     
     traces = rez.SortaSort.DistData.MeanSpkWaves(:,:,selClusters)*uVScale;
@@ -935,11 +979,11 @@ function tblSort_CellEditCallback(hObject, eventdata, handles)
     
     % recenter the scroll bar on selected element. Adapted from undocumented
     % matlab
-    [jScrollpane, levels, parentIdx, listing] = findjobj(hObject);
-    scrollValue = jScrollpane.getVerticalScrollBar.getValue;    
-    UpdateTable(hObject,handles);
-    drawnow;
-    jScrollpane.getVerticalScrollBar.setValue(scrollValue);
+%     [jScrollpane, levels, parentIdx, listing] = findjobj(hObject);
+%     scrollValue = jScrollpane.getVerticalScrollBar.getValue;    
+     UpdateTable(hObject,handles);
+%      drawnow;
+%     jScrollpane.getVerticalScrollBar.setValue(scrollValue);
     guidata(hObject,handles);
 end   
 
@@ -1040,7 +1084,7 @@ function PlotXCorr(selClusters, rez, figH, mmfFil)
             set(gca,'ytick',[]);
             set(gca,'tickdir','out');
             xlim([min(binCenters) max(binCenters)]);
-            drawnow;
+            %drawnow;
         end
     end
     
@@ -1148,7 +1192,7 @@ function pbSplit_Callback(hObject, eventdata, handles)
     clf('reset'); % FIX
     set(gcf,'name','Amplitudes');
     PlotAmplitudes(selClusters,rez, handles.AmpsH, ...
-            handles.mmfFil, handles.mmfDat);
+            handles.mmfFil);
     yyaxis right;
     polyH = impoly();
     if isempty(polyH)
@@ -1179,7 +1223,7 @@ function pbSplit_Callback(hObject, eventdata, handles)
     % retrieve a new set of spike waveforms using the new clusters
     handles.rez = rez;
     for j = [selClusters length(rez.SortaSort.GroupedSpikes)]
-        rez.SortaSort.SpkWaves{j} = ExtractSpkWaveforms(j, 100, handles);
+        rez.SortaSort.SpkWaves{j} = median(ExtractSpkWaveforms(j, 100, handles),3);
     end
     rez.SortaSort.DistData = CalculateDistances(rez);
     handles.SelClusters = [selClusters numel(rez.SortaSort.ClusterID)];
@@ -1240,7 +1284,7 @@ end
 %         handles.FetsH = figure();
 %         set(gcf,'name','Features');
 %         PlotFeatures(handles.SelClusters, handles.rez, handles.FetsH, ...
-%             handles.mmfFil, handles.mmfDat)
+%             handles.mmfFil)
 %     end
 %     figure(handles.FetsH);
 %     set(gcf,'defaultAxesColorOrder',[0 0 0; 0 0 0]);
@@ -1331,9 +1375,72 @@ function tblSort_KeyPressFcn(hObject, eventdata, handles)
             UpdateTable(hObject, handles);
     end
 end
+% 
+% function sig = ReadBinF(selChans, selTimes, window, handles)
+%     fid = handles.BinF.FID;
+%     numCh = handles.BinF.ChanNum;
+%     numT = handles.BinF.NumTPts;
+%     numEpochs = length(selTimes);
+%     windowDur = diff(window);
+%     selTimes = selTimes+window(1);
+%     sig = zeros(windowDur*numCh, numEpochs);
+%     for ind = 1:numEpochs
+%         t = selTimes(ind);
+%         
+%         if (t+windowDur) > numT
+%             postPadNum = (t+windowDur)-numT;
+%             currDur = numT-t;
+%         else
+%             postPadNum = 0;
+%             currDur = windowDur;
+%         end
+%         
+%         if t<0
+%             prePadNum = -t;
+%             currDur = currDur-prePadNum;
+%             t = 0;
+%         else
+%             prePadNum = 0;
+%             t = 2*(t*numCh)+1;
+%         end
+%         
+%         
+%         
+%         fseek(fid,t,'bof');
+%         sig(:,ind) = [nan(numCh*prePadNum,1); ...
+%                       fread(fid,currDur*numCh,'int16'); ...
+%                       nan(numCh*postPadNum,1)];
+%     end
+%     sig = reshape(sig,[numCh,windowDur numEpochs]);
+% end
+%         
+% %         
+% %         for c = selChans(:)'
+% %             fseek(fid,2*((t*numCh)+(c-1)),'bof');
+% %             
+% % end
+
+function spkWaves = LoadRecording(times, window, handles)
+    recLength = handles.rez.ops.sampsToRead;
+    chanMap = handles.rez.ops.chanMap;
+    numChan = length(chanMap);
+    spkTimes = handles.rez.SortaSort.GroupedSpikes{clusterInd};
+    spkTimes(spkTimes<31) = [];
+    spkTimes(spkTimes>(recLength-31)) = [];
+    if isempty(spkTimes)
+        spkWaves = nan(61,numChan);
+    else
+        subSpkTimes = spkTimes(randperm(length(spkTimes),min([length(spkTimes) numSpks])));
+        spkInds = (subSpkTimes+(-30:30))';
+        spkWaves = handles.mmfFil.Data.file(chanMap,spkInds(:));
+        spkWaves = reshape(spkWaves,numChan,61,length(subSpkTimes));
+        spkWaves = permute(spkWaves, [2 1 3]);
+        spkWaves = double(spkWaves)-mean(spkWaves,1);
+    end
+end
 
 function spkWaves = ExtractSpkWaveforms(clusterInd, numSpks, handles)
-    [~, recLength] = size(handles.mmfFil.Data.file);
+    recLength = handles.rez.ops.sampsToRead;
     chanMap = handles.rez.ops.chanMap;
     numChan = length(chanMap);
     spkTimes = handles.rez.SortaSort.GroupedSpikes{clusterInd};
@@ -1351,3 +1458,16 @@ function spkWaves = ExtractSpkWaveforms(clusterInd, numSpks, handles)
     end
 end
     
+function colHTMLStr = colorGen(cLevel,text)
+    if isnan(cLevel) 
+        colHex = '00';
+    elseif isinf(cLevel) && (cLevel > 0)
+        colHex = 'FF';
+    elseif isinf(cLevel) && (cLevel < 0)
+        colHex = '00';
+    else
+        colHex = dec2hex(round(cLevel));
+    end
+    
+    colHTMLStr = ['<font color="#' colHex '0000>   ' num2str(text) '</font>'];
+end
