@@ -19,14 +19,14 @@ function [cc, relBins, refInds] = PtCrossCorr(st1,st2,binStep,ccWind)
     
     %     st1 = sort(round(rand(1000,1)*1000)); % times in milliseconds
     %     st2 = sort(round(rand(1000,1)*1000)); % times in milliseconds
-    %     [cc, binEdges] = CrossCorr(st1,st2,1,[-20 20]);
+    %     [cc, binEdges] = CrossCorrPt(st1,st2,1,[-20 20]);
     
     % calculate cross correlation function with 5ms bins and a window of
     % -40 to 40 ms
     
     %     st1 = sort(round(rand(1000,1)*1000)); % times in milliseconds
     %     st2 = sort(round(rand(1000,1)*1000)); % times in milliseconds
-    %     [cc, binEdges] = CrossCorr(st1,st2,5,[-8 8]);
+    %     [cc, binEdges] = CrossCorrPt(st1,st2,5,[-8 8]);
         
     if nargout() > 2
         refIndsYes = true;
